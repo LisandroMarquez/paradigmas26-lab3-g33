@@ -1,3 +1,6 @@
 # Metals y Vscode 
 .metals/
 .vscode/
+target/*
+*.properties
+project/target/*

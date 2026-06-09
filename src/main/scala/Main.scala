@@ -1,5 +1,14 @@
+import org.apache.spark.sql.SparkSession
+
 object Main {
   def main(args: Array[String]): Unit = {
+    // Init Spark
+    val spark = SparkSession.builder()
+      .appName("RedditNER")
+      .master("local[*]")
+      .getOrCreate()
+
+    val sc = spark.sparkContext
     // Parse command-line arguments
     val cmdArgs = CommandLineArgs.parse(args) match {
       case Some(parsed) => parsed
@@ -12,37 +21,67 @@ object Main {
     // Filter out malformed subscriptions (None values)
     val subscriptions = subscriptionOpts.flatten
 
-    // Download feeds and parse posts, tracking success/failure
-    val downloadResults = subscriptions.map { subscription =>
-      val feedOpt = FileIO.downloadFeed(subscription.url)
-      val posts = feedOpt.fold(List[Post]())(JsonParser.parsePosts(_, subscription.name))
-      (feedOpt.isDefined, posts)
+    // Check if subscriptions loaded correctly
+    if (subscriptions.isEmpty) {
+      println("Error: No valid subscriptions found")
+      return
     }
 
-    // Count feed successes/failures
-    val feedsSuccess = downloadResults.count(_._1)
-    val feedsFailed = downloadResults.length - feedsSuccess
+    // Convert subscriptions to RDD
+    val subscriptionsRDD = sc.parallelize(subscriptions)
 
-    // Flatten all posts and count JSON parse failures
-    val allPosts = downloadResults.flatMap(_._2)
-    val postsSuccess = allPosts.length
-    val postsFailed = downloadResults.count(_._2.isEmpty)
+    // Statistics accumulators
+    val feedsSuccess = sc.longAccumulator("feedsSuccess")
+    val feedsFailed = sc.longAccumulator("feedsFailed")
+    val postsFailed = sc.longAccumulator("postsFailed")
+    val postsFiltered = sc.longAccumulator("postsFiltered")
 
-    // Filter empty posts
-    val filteredPosts = Analyzer.filterEmptyPosts(allPosts)
-    val postsFiltered = allPosts.length - filteredPosts.length
+    // Download + parse + filter in parallel
+    val postsRDD = subscriptionsRDD.flatMap {
+      subscription =>
+        FileIO.downloadFeed(subscription.url) match {
+          case Some(json) =>
+            try {
+              feedsSuccess.add(1)
+
+              JsonParser
+                .parsePosts(json, subscription.name)
+                .filter { post =>
+                  val valid = post.title.trim.nonEmpty && post.selftext.trim.nonEmpty
+                  if (!valid) postsFiltered.add(1)
+
+                  valid
+                }
+            } catch {
+              case _: Exception =>
+                postsFailed.add(1)
+                println(s"Warning: Failed to parse posts from '${subscription.name}' (${subscription.url})")
+
+                List.empty[Post]
+            }
+          case None =>
+            feedsFailed.add(1)
+            println(s"Warning: Failed to download from '${subscription.name}' (${subscription.url})")
+
+            List.empty[Post]
+        }
+    }
+
+    // Force Spark execution
+    val filteredPosts = postsRDD.collect().toList
+    val postsSuccess = filteredPosts.length
 
     // Calculate average characters in filtered posts
     val totalChars = filteredPosts.map(post => post.title.length + post.selftext.length).sum
     val avgChars = if (filteredPosts.nonEmpty) totalChars / filteredPosts.length else 0
 
-    // Prepare statistics
+    // Set statistics
     val stats = Map(
-      "feedsSuccess" -> feedsSuccess,
-      "feedsFailed" -> feedsFailed,
+      "feedsSuccess" -> feedsSuccess.value.toInt,
+      "feedsFailed" -> feedsFailed.value.toInt,
       "postsSuccess" -> postsSuccess,
-      "postsFailed" -> postsFailed,
-      "postsFiltered" -> postsFiltered,
+      "postsFailed" -> postsFailed.value.toInt,
+      "postsFiltered" -> postsFiltered.value.toInt,
       "avgChars" -> avgChars
     )
 
@@ -57,12 +96,13 @@ object Main {
     }
 
     // Load dictionaries
-    val dictionary = Dictionary.loadAll(cmdArgs.entitiesDir)
+    /*val dictionary = Dictionary.loadAll(cmdArgs.entitiesDir)
 
     // Detect entities in all posts (combine title and selftext)
-    val allEntities = filteredPosts.flatMap { post =>
-      val combinedText = post.title + " " + post.selftext
-      Analyzer.detectEntities(combinedText, dictionary)
+    val allEntities = filteredPosts.flatMap {
+      post =>
+        val combinedText = post.title + " " + post.selftext
+        Analyzer.detectEntities(combinedText, dictionary)
     }
 
     // Count entities
@@ -71,6 +111,6 @@ object Main {
 
     println(Formatters.formatTypeStats(typeStats))
     println()
-    println(Formatters.formatEntityStats(entityCounts, cmdArgs.topK))
+    println(Formatters.formatEntityStats(entityCounts, cmdArgs.topK))*/
   }
 }
