@@ -106,10 +106,10 @@ object Main {
     }
 
     // Load dictionaries
-    /*val dictionary = Dictionary.loadAll(cmdArgs.entitiesDir)
+    val dictionary = Dictionary.loadAll(cmdArgs.entitiesDir)
 
     // Detect entities in all posts (combine title and selftext)
-    val allEntities = filteredPosts.flatMap {
+    /*val allEntities = filteredPosts.flatMap {
       post =>
         val combinedText = post.title + " " + post.selftext
         Analyzer.detectEntities(combinedText, dictionary)
@@ -122,5 +122,33 @@ object Main {
     println(Formatters.formatTypeStats(typeStats))
     println()
     println(Formatters.formatEntityStats(entityCounts, cmdArgs.topK))*/
+
+    // Pipepline ¿¿¿encadenado??? sobre el RDD[Post] 
+    // Buscamos las entidades 
+    val entitiesRDD = postsRDD.flatMap{ post => 
+      val combinedText = post.title + " " + post.selftext
+      Analyzer.detectEntities(combinedText, dictionary)
+    }
+
+    //Armamos las claves con los valores tanto para tipos como para entidades 
+    val typePairsRDD = entitiesRDD.map(entity =>
+      (entity.entityType, 1)
+    )
+    val entityPairsRDD = entitiesRDD.map(entity =>
+      ((entity.entityType, entity.text), 1)
+    )  
+    
+    // Sumamos los valores para agruparlos
+    val typeCountsRDD = typePairsRDD.reduceByKey((value1, value2) => value1 + value2)
+    val entityCountsRDD = entityPairsRDD.reduceByKey((value1, value2) => value1 + value2)
+
+    val totalEntities = entitiesRDD.count().toInt
+    val entityCounts = entityCountsRDD.collect().toMap 
+
+    val typeStats = typeCountsRDD.collect().toMap + ("total" -> totalEntities)
+
+    println(Formatters.formatTypeStats(typeStats))
+    println() 
+    println(Formatters.formatEntityStats(entityCounts, cmdArgs.topK))
   }
 }
