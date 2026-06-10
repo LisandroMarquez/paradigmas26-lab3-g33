@@ -2,13 +2,16 @@ import org.apache.spark.sql.SparkSession
 
 object Main {
   def main(args: Array[String]): Unit = {
+    // Just to see better things in the terminal
+    println("======================================== START ========================================")
+
     // Init Spark
     val spark = SparkSession.builder()
       .appName("RedditNER")
       .master("local[*]")
       .getOrCreate()
-
     val sc = spark.sparkContext
+
     // Parse command-line arguments
     val cmdArgs = CommandLineArgs.parse(args) match {
       case Some(parsed) => parsed
@@ -21,7 +24,7 @@ object Main {
     // Filter out malformed subscriptions (None values)
     val subscriptions = subscriptionOpts.flatten
 
-    // Check if subscriptions loaded correctly
+    // Check if subscriptions were loaded correctly
     if (subscriptions.isEmpty) {
       println("Error: No valid subscriptions found")
       return
@@ -42,24 +45,29 @@ object Main {
         FileIO.downloadFeed(subscription.url) match {
           case Some(json) =>
             try {
+              // Feed accessible
               feedsSuccess.add(1)
 
               JsonParser
                 .parsePosts(json, subscription.name)
-                .filter { post =>
-                  val valid = post.title.trim.nonEmpty && post.selftext.trim.nonEmpty
-                  if (!valid) postsFiltered.add(1)
+                .filter {
+                  // Is this post valid?
+                  post =>
+                    val valid = post.title.trim.nonEmpty && post.selftext.trim.nonEmpty
+                    if (!valid) postsFiltered.add(1)
 
-                  valid
+                    valid
                 }
             } catch {
               case _: Exception =>
+                // Post failed to parse
                 postsFailed.add(1)
                 println(s"Warning: Failed to parse posts from '${subscription.name}' (${subscription.url})")
 
                 List.empty[Post]
             }
           case None =>
+            // Feeds failed to download
             feedsFailed.add(1)
             println(s"Warning: Failed to download from '${subscription.name}' (${subscription.url})")
 
@@ -67,8 +75,10 @@ object Main {
         }
     }
 
-    // Force Spark execution
+    // Force Spark await every thread
     val filteredPosts = postsRDD.collect().toList
+
+    // Get stats
     val postsSuccess = filteredPosts.length
 
     // Calculate average characters in filtered posts

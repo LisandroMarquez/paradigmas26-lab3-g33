@@ -12,15 +12,39 @@ object FileIO {
    */
   def readSubscriptions(filePath: String): List[Option[Subscription]] = {
     implicit val formats: Formats = DefaultFormats
-    val source = Source.fromFile(filePath)
-    val content = source.mkString
-    source.close()
+    try {
+      val source = Source.fromFile(filePath) // File not found can happen
+      val content = try source.mkString finally source.close()
 
-    val json = parse(content)
-    val subscriptions = json.extract[List[Map[String, String]]]
+      val json = parse(content)  // Json parsing could go wrong
+      val subscriptions = json.extract[List[Map[String, String]]]
 
-    subscriptions.map { sub =>
-      Some(Subscription(sub("name"), sub("url")))
+      subscriptions.map {
+        sub =>
+          (sub.get("name"), sub.get("url")) match {
+            case (Some(name), Some(url)) =>
+              Some(Subscription(name, url))
+            case _ =>
+              println("Warning: Skipping malformed subscription (missing 'name' or 'url' field)")
+
+              None
+          }
+      }
+    } catch {
+        case _: java.io.FileNotFoundException =>
+          println(s"Error: Could not load $filePath - file not found")
+
+          List()
+
+        case _: com.fasterxml.jackson.core.JsonParseException =>
+          println(s"Error: Could not load $filePath - invalid JSON format")
+
+          List()
+
+        case e: Exception =>
+          println(s"Error: $e")
+
+          List()
     }
   }
 
@@ -30,10 +54,13 @@ object FileIO {
    * @return Option containing JSON as String, None on network error or timeout
    */
   def downloadFeed(url: String): Option[String] = {
-    val source = Source.fromURL(url)
-    val content = source.mkString
-    source.close()
-    Some(content)
+    try {
+      val source = Source.fromURL(url)
+      val content = try source.mkString finally source.close()
+      Some(content)
+    } catch {
+      case _: Exception => None
+    }
   }
 
   /**
