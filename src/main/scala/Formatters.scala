@@ -63,4 +63,13 @@ $typeLines"""
     s"""============ ENTIDADES NOMBRADAS MÁS FRECUENTES ============
 $formatted"""
   }
+
+  def formatTimingStats(timeEntities: Double, timePosts: Double,
+                        timeCounts: Double, timeTotal: Double): String = {
+    s"""============ TIEMPOS DE EJECUCIÓN ============
+    Conteo de entidades (count):      $timeEntities s
+    Recolección de posts (collect):   $timePosts s
+    Recolección de conteos (collect): $timeCounts s
+    Tiempo total del pipeline:        $timeTotal s"""
+  }
 }

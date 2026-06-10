@@ -37,6 +37,7 @@ object Main {
     // Statistics accumulators
     val feedsSuccess = sc.longAccumulator("feedsSuccess")
     val feedsFailed = sc.longAccumulator("feedsFailed")
+    val postsDownloaded = sc.longAccumulator("postsDownloaded") 
     val postsFailed = sc.longAccumulator("postsFailed")
     val postsFiltered = sc.longAccumulator("postsFiltered")
 
@@ -54,6 +55,8 @@ object Main {
                 .filter {
                   // Is this post valid?
                   post =>
+                                    // Contar cada post antes de aplicar el filtro
+                    postsDownloaded.add(1)
                     val valid = post.title.trim.nonEmpty && post.selftext.trim.nonEmpty
                     if (!valid) postsFiltered.add(1)
 
@@ -104,10 +107,22 @@ object Main {
 
     // Lazy evaluation finish here!
     // Now we collect all data
+    val t0 = System.currentTimeMillis()
     val totalEntities = entitiesRDD.count().toInt
+    val t1 = System.currentTimeMillis()
+
     val filteredPosts = postsRDD.collect().toList
+    val t2 = System.currentTimeMillis()
+
     val entityCounts = entityCountsRDD.collect().toMap
     val typeStats = typeCountsRDD.collect().toMap + ("total" -> totalEntities)
+    val t3 = System.currentTimeMillis()
+
+    // Steps Duration
+    val timeEntities = (t1 - t0) / 1000.0
+    val timePosts    = (t2 - t1) / 1000.0
+    val timeCounts   = (t3 - t2) / 1000.0
+    val timeTotal    = (t3 - t0) / 1000.0
 
     // Get posts stats
     val postsSuccess = filteredPosts.length
@@ -128,6 +143,8 @@ object Main {
 
     // Print output
     println(Formatters.formatProcessingStats(stats))
+    println()
+    println(Formatters.formatTimingStats(timeEntities, timePosts, timeCounts, timeTotal))
     println()
 
     // Check if we have any posts to process
