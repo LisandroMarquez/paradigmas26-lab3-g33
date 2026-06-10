@@ -3,7 +3,7 @@ import org.apache.spark.sql.SparkSession
 object Main {
   def main(args: Array[String]): Unit = {
     // Just to see better things in the terminal
-    println("======================================== START ========================================")
+    println("<======================= START =======================>")
 
     // Init Spark
     val spark = SparkSession.builder()
@@ -30,6 +30,7 @@ object Main {
       return
     }
 
+    // Lazy evaluation starts here!
     // Convert subscriptions to RDD
     val subscriptionsRDD = sc.parallelize(subscriptions)
 
@@ -75,10 +76,40 @@ object Main {
         }
     }
 
-    // Force Spark await every thread
-    val filteredPosts = postsRDD.collect().toList
+    // Load dictionaries
+    val dictionary = Dictionary.loadAll(cmdArgs.entitiesDir)
 
-    // Get stats
+    // Share an immutable copy of dictionary to every worker (recommended by Spark documentation)
+    val dictionaryBroadcast = sc.broadcast(dictionary)
+
+    // Pipepline encadenado??? sobre el RDD[Post] 
+    // Buscamos las entidades 
+    val entitiesRDD = postsRDD.flatMap{ post => 
+      val combinedText = post.title + " " + post.selftext
+
+      Analyzer.detectEntities(combinedText, dictionaryBroadcast.value)
+    }
+
+    // Armamos las claves con los valores tanto para tipos como para entidades 
+    val typePairsRDD = entitiesRDD.map(
+      entity => (entity.entityType, 1)
+    )
+    val entityPairsRDD = entitiesRDD.map(
+      entity => ((entity.entityType, entity.text), 1)
+    )  
+    
+    // Sumamos los valores para agruparlos
+    val typeCountsRDD = typePairsRDD.reduceByKey((value1, value2) => value1 + value2)
+    val entityCountsRDD = entityPairsRDD.reduceByKey((value1, value2) => value1 + value2)
+
+    // Lazy evaluation finish here!
+    // Now we collect all data
+    val totalEntities = entitiesRDD.count().toInt
+    val filteredPosts = postsRDD.collect().toList
+    val entityCounts = entityCountsRDD.collect().toMap
+    val typeStats = typeCountsRDD.collect().toMap + ("total" -> totalEntities)
+
+    // Get posts stats
     val postsSuccess = filteredPosts.length
 
     // Calculate average characters in filtered posts
@@ -104,54 +135,6 @@ object Main {
       println("Error: No valid posts downloaded after filtering")
       return
     }
-
-    // Load dictionaries
-    val dictionary = Dictionary.loadAll(cmdArgs.entitiesDir)
-
-    // OLD CODE FOR REFERENCE
-    // Detect entities in all posts (combine title and selftext)
-    /*val allEntities = filteredPosts.flatMap {
-      post =>
-        val combinedText = post.title + " " + post.selftext
-        Analyzer.detectEntities(combinedText, dictionary)
-    }
-
-    // Count entities
-    val entityCounts = Analyzer.countEntities(allEntities)
-    val typeStats = Analyzer.countByType(allEntities)
-
-    println(Formatters.formatTypeStats(typeStats))
-    println()
-    println(Formatters.formatEntityStats(entityCounts, cmdArgs.topK))*/
-
-    // Share an immutable copy of dictionary to every worker (recommended by Spark documentation)
-    val dictionaryBroadcast = sc.broadcast(dictionary)
-
-    // Pipepline encadenado??? sobre el RDD[Post] 
-    // Buscamos las entidades 
-    val entitiesRDD = postsRDD.flatMap{ post => 
-      val combinedText = post.title + " " + post.selftext
-
-      Analyzer.detectEntities(combinedText, dictionaryBroadcast.value)
-    }
-
-    // Armamos las claves con los valores tanto para tipos como para entidades 
-    val typePairsRDD = entitiesRDD.map(
-      entity => (entity.entityType, 1)
-    )
-    val entityPairsRDD = entitiesRDD.map(
-      entity => ((entity.entityType, entity.text), 1)
-    )  
-    
-    // Sumamos los valores para agruparlos
-    val typeCountsRDD = typePairsRDD.reduceByKey((value1, value2) => value1 + value2)
-    val entityCountsRDD = entityPairsRDD.reduceByKey((value1, value2) => value1 + value2)
-
-    // Force to await every worker to get every metric needed
-    val totalEntities = entitiesRDD.count().toInt
-    val entityCounts = entityCountsRDD.collect().toMap 
-
-    val typeStats = typeCountsRDD.collect().toMap + ("total" -> totalEntities)
 
     println(Formatters.formatTypeStats(typeStats))
     println() 

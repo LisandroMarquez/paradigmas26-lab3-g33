@@ -57,7 +57,7 @@ $typeLines"""
       .take(topK)
 
     val formatted = sorted.map { case ((entityType, entityName), count) =>
-      s"[Type=$entityType] $entityName: $count apariciones"
+      s"[$entityType] $entityName: $count apariciones"
     }.mkString("\n")
 
     s"""============ ENTIDADES NOMBRADAS MÁS FRECUENTES ============
