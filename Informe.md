@@ -204,6 +204,20 @@ Al pasar funciones (o *closures*) a transformaciones como `map` o `reduceByKey`,
 
 ---
 
+## Ejercicio 3: Paralelizar el cómputo de entidades nombradas
+
+## Inciso A - reduceByKey como barrera de sincronización 
+
+En el `cluster`, quien en Spark es el conjunto compuesto por el driver y los workers los cuales colaboran para ejecutar *acciónes y transformaciones de Spark sobre particiones de datos*, al llegar a `reduceByKey` lo que ocurre es un cambio de información y datos entre los workers que estuvieron recolectando sus propios pares de clave-valor por separado en las operaciones `flatMap` y `map`, este cambio es necesario pues es la unica operacion capaz de poder juntar estos pares recolectados por separado en cada worker y asi poder obtener un total correcto. 
+
+## Inciso B - Restricciones de reduceByKey 
+
+Las restricciones que impone reduceByKey a la función que le pasamos son la **conmutatividad** y la **asociatividad**, esto debido a que no sabemos como Spark puede distribuir el trabajo decada worker por separado y en que *orden* podria terminar de *juntar* estos resultados, osea, estos valores que coinciden con cada clave, por lo tanto, una función en nuestro caso con una operacion como lo es la suma cumple con estas restricciones. 
+
+## Inciso C - Lectura del diccionario de entidades 
+
+Incialmente, el **driver** es quien lee estas entidades gracias a la funcion *loadAll(entitiesDir: String)*. Luego, el diccionario se distribuye a los workers utilizando una variable broadcast creada mediante *sc.broadcast(dictionary)*. De esta manera, cada worker puede acceder a una copia local del diccionario durante la ejecución de las tareas. 
+
 ## Ejercicio 4: Monitoreo del exito de tareas
 
 ### Inciso A - Uso de Accumulators, toma de decisiones y valores incorrectos
