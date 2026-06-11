@@ -204,6 +204,45 @@ Al pasar funciones (o *closures*) a transformaciones como `map` o `reduceByKey`,
 
 ---
 
+## Ejercicio 4: Monitoreo del exito de tareas
+
+### Inciso A - Uso de Accumulators, toma de decisiones y valores incorrectos
+
+Los **Accumulators** en Spark operan bajo un modelo de concurrencia donde los *workers* (ejecutores) solo tienen permisos de **escritura** (pueden incrementar el valor mediante `add`), mientras que únicamente el *driver* tiene permisos de **lectura**. Por esta razón, no deben usarse para tomar decisiones lógicas en las etapas distribuidas: los *workers* no pueden leer el valor del acumulador durante la ejecución de las tareas, por lo que carecen del estado global necesario para bifurcar o condicionar su flujo de trabajo en base a ese valor.
+
+**¿En qué situación un Accumulator puede dar un valor incorrecto?**
+Esto ocurre típicamente cuando se incrementa un acumulador dentro de una **transformación** (como `map`, `filter` o `flatMap` - como ocurre actualmente en el `Main.scala` del proyecto) en lugar de en una **acción** (como `foreach`). Debido a que Spark es tolerante a fallos y utiliza evaluación perezosa, si un nodo falla y Spark necesita reejecutar una partición perdida, o si un RDD no está persistido y sufre de múltiples acciones que causan la re-evaluación del linaje, la transformación se ejecutará más de una vez. Esto provocará que el acumulador se incremente de forma redundante (sobrestimando el conteo real).
+
+### Inciso B - Disponibilidad del valor para el driver
+
+El valor de un Accumulator está disponible y garantiza ser exacto para el *driver* **únicamente después de que haya finalizado por completo la acción** que evalúa el RDD asociado. 
+
+Antes de que se invoque dicha acción, debido a la evaluación perezosa, el acumulador mantiene su valor inicial (cero). Durante la ejecución de la acción, el valor que observa el *driver* puede ser parcial, ya que los *workers* transmiten los incrementos de manera asíncrona conforme completan sus lotes de tareas. Solamente cuando la acción (por ejemplo, `collect()`, `count()`) concluye exitosamente, Spark asegura que todos los incrementos se han consolidado y el *driver* puede leer el total invocando `.value`.
+
+# Comparación de Rendimiento: Secuencial vs Spark
+
+
+| Etapa del Pipeline | Tiempo Secuencial (s) | Tiempo con Spark (s) |
+| :--- | :---: | :---: |
+| **Recolección de posts** (descarga y parseo) | *20.619 s* | *0.06 s* |
+| **Conteo de entidades** (detección) | *0.051 s* | *5.482 s* |
+| **Recolección de conteos** (agrupación y reduce) | *0.022 s* | *0.707 s* |
+| **Tiempo total del pipeline** | *21.035 s* | *6.249 s* |
+
+### Conclusiones y Justificación
+
+**¿Se aprecia la diferencia para la cantidad de datos que estamos trabajando?**
+Sí, la diferencia es notable. El tiempo total del pipeline se reduce en más de un 70% (de ~21 segundos a ~6.2 segundos). Esto demuestra que el uso de Spark aporta un gran beneficio de rendimiento al permitir el procesamiento concurrente, siendo especialmente ventajoso para mitigar los cuellos de botella generados por la latencia de las operaciones de red (descarga de los feeds).
+
+**¿Por qué sucede esto?**
+Esta reducción en el tiempo total y la particular distribución de los tiempos por etapa en Spark se explican por los siguientes factores:
+
+1. **Evaluación Perezosa (Lazy Evaluation) y Caché:** A diferencia del modelo secuencial donde cada operación se ejecuta de inmediato, Spark posterga el cómputo hasta que se invoca una acción. El tiempo reportado como "Conteo de entidades" (5.482 s) corresponde a la primera acción invocada (`entitiesRDD.count()`). Esta acción obliga a Spark a computar todo el linaje previo, lo que significa que **este tiempo incluye la descarga de todos los feeds, el parseo, el filtrado y la detección de las entidades**. Además, como se usó `cache()` en los RDDs, el paso siguiente ("Recolección de posts", que ejecuta `collect()`) es casi instantáneo (0.06 s) porque Spark simplemente recupera los datos ya procesados desde la memoria.
+
+2. **Paralelización de Operaciones de I/O:** En la versión secuencial, las solicitudes HTTP para descargar los feeds son bloqueantes y se ejecutan una tras otra, acumulando casi 21 segundos de espera. Con Spark, el clúster distribuye y ejecuta múltiples descargas simultáneamente entre sus *workers*, colapsando el tiempo de espera drásticamente.
+
+3. **Overhead de Sincronización (Shuffle):** En contraparte, la recolección de conteos y el agrupamiento son más rápidos en la versión secuencial (0.022 s frente a 0.707 s en Spark). Esto se debe a que la versión secuencial actualiza un diccionario en memoria local, mientras que Spark (`reduceByKey`) requiere una barrera de sincronización y un intercambio de datos entre los nodos de la red (*Shuffle*) para poder sumar todas las claves globales. Aun así, el tiempo que se ahorra paralelizando las descargas compensa con creces este pequeño *overhead*.
+
 ## Ejercicio 5: Acceso a datos y estadísticas del resultado
 
 ### Inciso A - ¿Qué ocurriría si no se llamara a `cache()`? ¿Cuántas veces se ejecutaría la descarga de feeds?
