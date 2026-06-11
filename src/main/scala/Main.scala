@@ -77,7 +77,7 @@ object Main {
 
             List.empty[Post]
         }
-    }
+    }.cache()
 
     // Load dictionaries
     val dictionary = Dictionary.loadAll(cmdArgs.entitiesDir)
@@ -91,7 +91,7 @@ object Main {
       val combinedText = post.title + " " + post.selftext
 
       Analyzer.detectEntities(combinedText, dictionaryBroadcast.value)
-    }
+    }.cache()
 
     // Armamos las claves con los valores tanto para tipos como para entidades 
     val typePairsRDD = entitiesRDD.map(
@@ -117,6 +117,10 @@ object Main {
     val entityCounts = entityCountsRDD.collect().toMap
     val typeStats = typeCountsRDD.collect().toMap + ("total" -> totalEntities)
     val t3 = System.currentTimeMillis()
+
+    // Release cached RDDs 
+    entitiesRDD.unpersist()
+    postsRDD.unpersist()
 
     // Steps Duration
     val timeEntities = (t1 - t0) / 1000.0
